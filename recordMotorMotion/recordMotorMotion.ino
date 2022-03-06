@@ -4,6 +4,9 @@
 #include <PololuMotorDriver.h>
 #include <String.h>
 
+#define INA1 2
+#define INB1 3
+#define M1_PWM 4
 #define INA2 5
 #define INB2 6
 #define M2_PWM 7
@@ -16,7 +19,7 @@ File dataFile;
 //   Good Performance: only the first pin has interrupt capability
 //   Low Performance:  neither pin has interrupt capability
 Encoder myEnc(38, 39);
-PololuDcMotor motor =  PololuDcMotor(INA2, INB2, M2_PWM);
+PololuDcMotor motor =  PololuDcMotor(INA1, INB1, M1_PWM);
 //   avoid using pins with LEDs attached
 
 void setup() {
@@ -49,7 +52,7 @@ long lastPos = -99;
 void loop() {
   int power = 0;
   if (millis() > 3000) {
-    power = 5000;
+    power = 2000;
   }
   if (millis() > 5000) {
     power = 0;
