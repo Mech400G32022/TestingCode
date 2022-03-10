@@ -9,6 +9,8 @@
 #include <Encoder.h>
 #include <String.h>
 
+#include "TimerExecuter.h"
+
 //Pin Definitions
 #define INA1 2
 #define INB1 3
@@ -26,15 +28,17 @@ Adafruit_BNO055 baseImu = Adafruit_BNO055(2, BNO055_ADDRESS_A, &Wire);
 
 PololuDcMotor motor1 = PololuDcMotor(INA1, INB1, M1_PWM);
 Encoder enc1(ENCA_1, ENCB_1);
+long motor1Target = 0;
 PololuDcMotor motor2 = PololuDcMotor(INA2, INB2, M2_PWM);
 
-#define SPOOL_PLATE_RATIO 14.14
+#define SPOOL_PLATE_RATIO 17
 
 #define F_MC_LOOP_HZ 1000
 IntervalTimer motorControlTimer;
 
 #define F_IMU_LOOP_HZ 100
-IntervalTimer positionControlTimer;
+void positionLoop();
+IntervalExecuter positionControlTimer(1000/F_IMU_LOOP_HZ, positionLoop);
 
 #define IMU_CALIB_SIZE (sizeof(adafruit_bno055_offsets_t) + sizeof(long))
 
@@ -49,7 +53,7 @@ IntervalTimer positionControlTimer;
 #endif
 
 #define DEBUG_SD
-#define FILENAME_PATTERN "motor_imu%d.csv"
+#define FILENAME_PATTERN "enc_imu%d.csv"
 #define CSV_HEADER "time (ms),enc pos,y1,y2"
 
 //Define the index of the data to write to the file
@@ -99,13 +103,13 @@ void initDataLog(){
   }
 }
 
-void saveCSV(){
+void saveCSV(){  
   for(int i = 0; i < CSV_LEN - 1; i++) {
     dataFile.print(csv_buffer[i]);
     dataFile.print(",");
   }
   dataFile.println(csv_buffer[CSV_LEN - 1]);
-  //dataFile.flush();
+  dataFile.flush();
 }
 
 void initImu(Adafruit_BNO055 imu) {
@@ -114,7 +118,6 @@ void initImu(Adafruit_BNO055 imu) {
    if(!imu.begin()) {
     FATAL("No BNO055 detected Check your wiring or I2C ADDR!");
     delay(200);
-    //while(1);
   }
 
   FATAL("After begin");
@@ -154,66 +157,60 @@ void setup() {
   #endif
 
 
-
-
   //The motor specific
-  motor1.deadzone = 1200;
-  motor2.deadzone = 1200;
+  motor1.deadzone = 1600;
+  motor2.deadzone = 1400;
 
-  SerialPrintLn("Hello");
   initImu(baseImu);
-  SerialPrintLn("Hello2");
   initImu(platformImu);
-  SerialPrintLn("Hello3");
 
-  #ifdef DEBUG_SD
+
+  float average = 0;
+
+  for (int i = 0; i < 100; i++){
+    imu::Vector<3> euler1 = platformImu.getVector(Adafruit_BNO055::VECTOR_EULER);
+    imu::Vector<3> euler2 = baseImu.getVector(Adafruit_BNO055::VECTOR_EULER);
+    average += (euler1.y() - euler2.y())/100;
+    delay(10);
+  }
+  enc1.write((long)(average*SPOOL_PLATE_RATIO)); 
+
+   #ifdef DEBUG_SD
     initDataLog();
     if (!saveCSVTimer.begin(saveCSV, 1000000/F_SAVE_CSV_HZ)) {
       FATAL("Hardware timers unavailable");
     }
-    motorControlTimer.priority(150);
-
+    saveCSVTimer.priority(150);
   #endif
 
-/*
-  if (!motorControlTimer.begin(motorLoop, 1000)) {
+  
+  if (!motorControlTimer.begin(motorLoop, 1000000/F_MC_LOOP_HZ)) {
     FATAL("Hardware timers unavailable");
   }
-  motorControlTimer.priority(149);*/
-
-  if (!positionControlTimer.begin(positionLoop, 10000)){
-    FATAL("Hardware Timers unavailable");
-  }
-  positionControlTimer.priority(148);
+  motorControlTimer.priority(149);
 
 }
 
 void motorLoop() {
-  
+  motor1.setPower(-25*(enc1.read() - motor1Target));
 }
 
 void positionLoop() {
-  imu::Vector<3> euler1 = platformImu.getVector(Adafruit_BNO055::VECTOR_EULER);
-  imu::Vector<3> gyro1 = platformImu.getVector(Adafruit_BNO055::VECTOR_GYROSCOPE);
-  imu::Vector<3> euler2 = baseImu.getVector(Adafruit_BNO055::VECTOR_EULER);
-  imu::Vector<3> gyro2 = baseImu.getVector(Adafruit_BNO055::VECTOR_GYROSCOPE);
-
+    imu::Vector<3> euler1 = platformImu.getVector(Adafruit_BNO055::VECTOR_EULER);
+    imu::Vector<3> gyro1 = platformImu.getVector(Adafruit_BNO055::VECTOR_GYROSCOPE);
+    imu::Vector<3> euler2 = baseImu.getVector(Adafruit_BNO055::VECTOR_EULER);
+    imu::Vector<3> gyro2 = baseImu.getVector(Adafruit_BNO055::VECTOR_GYROSCOPE);
   
-  noInterrupts();
-  csv_buffer[CSV_TIME] = millis();
-  csv_buffer[CSV_Y1] = euler1.y();
-  csv_buffer[CSV_Y2] = euler2.y();
-  interrupts();
-  
+    
+    noInterrupts();
+    csv_buffer[CSV_TIME] = millis();
+    csv_buffer[CSV_Y1] = euler1.y();
+    csv_buffer[CSV_Y2] = euler2.y();
+    csv_buffer[CSV_ENC_POS] = (double)enc1.read();
+    interrupts();
 }
 
 void loop() {
-  // put your main code here, to run repeatedly:
-  if (millis() > 4000) {
-    motor1.setPower(0);
-    dataFile.flush();
-  } else if (millis() > 2000) {
-    motor1.setPower(2000);
-  }
-  csv_buffer[CSV_ENC_POS] = (double)enc1.read();
+  motor1Target = (long)(10*SPOOL_PLATE_RATIO*sin(2*PI*millis()/1000));
+  positionControlTimer.executeIfTime();
 }
